@@ -206,3 +206,110 @@ Macro for parking the tool when a tool is swwitched, in order for each of the to
 * In the next excution step, we define the **'if-else'** statement for defining an if statement if the dual carriage is defined or not, where we save the current state of the tool using **'SAVE_GCODE_STATE NAME=park_tool'** and set the offset different axes with **'SET_GCODE_OFFSET'** if needed.
 * With the absolute position, use a **'nested-if'** condition of determining which current tool is active, and give the command for the respective tool to travel to its home or endstop position. In case where the **'printer.toolhead.extruder == 'extruder''** is active, the command generated is **'G1 X{printer.configfile.config.stepper_x.position_endstop} F{dcvars.feedrate}'** 
 * Based on the tool which is parked, the current state of printer is restored after the tool is parked using **'RESTORE_GCODE_STATE NAME=park_tool'**
+
+6. *[gcode_macro T0/T1]*
+
+Commonly used to represent the respective tools, we create the macro in order to perform some operations that we need when switching to respective tools.
+* we define a command by using the **'jinja'** syntax {% set dcvars = printer["gcode_macro DC_VARS"] %} where it defines the printer's defined gcode_macro command in the **'dcvars'** command.
+* Now the sequence of operation is such that, it detects if the dual carriage macro is mentioned, based on which it creates a nested-if loop which goes by, if the other carriage is active, and then checks if the autpark variable is the active '1' under the 'dcvars' section.
+* This is then followed by the nested-if checking if the **'z_hop'** offset is provided or not.
+* After the **'z_safe'** is applied to the bed, the gcode_macro of **'_PARK_TOOL'** after which the last if statement ends.
+* After these pre-steps, the command to activate the required tool is activated by **'ACTIVATE_EXTRUDER EXTRUDER=extruder/extruder1'** where extruder/extruder1 are the tool 0/tool 1 respectively as per the extruder macros.
+* In the dual carriage functionality, the tool to be activated is set with **'SET_DUAL_CARRIAGE CARRIAGE=0/1'** based on the active tool requirement.
+
+7. *[gcode_macro G28]*
+
+We have a common functioning home functionality which works on all axes. However some customised travel and sequence is to be implemented in order to integrate with the **'TouchUI'**, so we introduce some if-else statement cases in it. We also rename it as **'rename_existing: G28.1'** 
+* In case 1, we need only the single X-axis to home, so we put up the conditions of 'if params.X' and 'not params.Y' and 'not params.Z' and then input the command with **'G28.1 X'**
+* In case 2, we need only the single Y-axis to home, so we put up the conditions of 'not params.X' and 'params.Y' and 'not params.Z' and then input the command with **'G28.1 Y'**
+* In case 3, we need only the single Z-axis to home, so we put up the conditions of 'not params.X' and 'not params.Y' and 'params.Z' and then input the command with **'G28.1 Z'**
+* In case 4, we need only the Y-axis and X-axis to home in sequence, so we put up the conditions of 'if params.Y' and 'params.X' and 'not params.Z' and then input the command with **'G28.1 Y'** followed by **'G28.1 X'**
+* In case 4, we need the Z-axis, Y-axis and X-axis to home in sequence, so we put up the conditions of 'if params.X' and 'params.Y' and 'params.Z' and then input the command with **'G28.1 Z'** followed by **'G28.1 Y'** and again followed by **'G28.1 X'**.
+
+8. *[gcode_macro G29]*
+
+This is the code for the Auto-bed leveling before the start of any print.
+* We first clear the previous bed mesh using **'BED_MESH_CLEAR'**
+* We then put in the Klipper's ABL command called the **'BED_MESH_CALIBRATE'** which makes it probe the bed according to the profile set in **'[probe]'** and **'[bed_mesh]'**
+* After probing this is implemented in the current mesh, so in order to save the mesh profile, we use **'BED_MESH_PROFILE SAVE=p1'** where p1 is the name of the profile to be created.
+* Later this profile is to be loaded after saving using **'M420 S1'**
+
+9. *[gcode_macro M420]*
+
+Since Klipper cannot recognise M420, the macro is to be created and associate with the klipper command for loading the mesh profile.
+* We use **'params.S'** as parameters for loading and removing.
+* if **'params.S =='1''** then we put up the mesh loading command which is, **'BED_MESH_PROFILE LOAD=p1'**
+* if **'params.S =='0''** then we put up the mesh removing command which is, **'BED_MESH_PROFILE REMOVE=p1'**
+
+10. *[gcode_macro M218]*
+
+This command is for setting the XY offset in order to calibrate the 2nd tool with respect to the tool 1
+* We use the if statement for each of parameters using **params.#** for all the three axes. The command used is **'SAVE_VARIABLE VARIABLE=tool_offset_# VALUE={params.#|float}'** where the variables of the particular tool parameter is updated in the **'T1'** macro, which takes in offset parameters from **tool_offset_#** where '#' being the axis.
+
+11. *[gcode_macro M500]*
+
+This is the regular marlin command for saving the current changes, in the case of klipper, this is replaced by **'SAVE_CONFIG'** where the firmware restarts and the file is saved.
+
+12. *[gcode_macro M503]*
+
+This command is to give an echo response in the terminal regarding the current values of **M218** and **M851** where these are the 'tool 1 offset values' and 'probe z offset values' respectively.
+* In case of echo of M218, it echoes the X, Y and Z 'tool_offset_#' variables that were saved using M218 command.
+* In case of echo of M851, it echoes the probe Z offset, which is setup in the **'z_offset'** variable in the **[probe]** section
+
+
+ **Disclaimer: The following steps below are the additional unique features of duplicate/mirror functionality of the printer. These haven't been tested to full extent and can attract other modifications that may be required for better performance**
+Certain internal python changes were obtained, for which it can be obtained from [this link](https://github.com/Klipper3d/klipper/pull/4464) and [this link](https://github.com/Laker87/klipper) (for cartesian kinematics).
+ 
+13. *[gcode_macro M605]*
+
+In marlin, it has built-in feature for multiple nozzle activation for the purpose of duplication and mirror, however klipper lacks in presence of this feature overall, hence a macro is created, and certain internal files were changed in the **'pull-requests'** of a certain open-source user's content, which were obtained here.
+
+* Using the Jinja syntax, we set the **'mode'** as the **'params.S'** where this states the mode type of M605.
+* In this case, we set different modes in the following ways:
+
+M605 S0 = MODE FULL CONTROL
+
+M605 S1 = AUTO-PARK
+
+M605 S2 = DUPLICATION
+
+M605 S3 = MIRRORED
+
+* In the different cases, we make the various **'if-else'** conditions of different modes, where the respective macros of the modes are defined under those modes.
+* In the **'S0'** and **'S1'** modes the variable of autopark activation are input as well using **'SET_GCODE_VARIABLE MACRO=DC_VARS VARIABLE=autopark VALUE=0/1'**
+
+14. *[gcode_macro MODE_FULL_CONTROL]*
+
+Macro for defining the mode of controlling each of the tools independently without the necessary of parking each tool. This tool could be used for the calibration of XY offsets.
+
+* The variable of **'dcvars'** is set by inputting its macro in it.
+* the if statement of checking the dual carriage is defined or not is checked, and below it certain commands are input.
+* The **'SET_DUAL_CARRIAGE_MODE MODE=FULL_CONTROL'** is set
+* The X-axis alone is homed using **'G28 X'**
+* Since we use double steppers for each of the extruder motor's sequence, the command to sync the motors are added: **'SYNC_EXTRUDER_MOTION EXTRUDER=extruder1 MOTION QUEUE=extruder1'** followed by **'SYNC_EXTRUDER_MOTION EXTRUDER=extrude1 MOTION QUEUE=extruder1'**, which roughly states that, the **'extruder1'** is synced with itself, and after which the stepper **'[extruder_stepper extrude1]'** is synced with **'extruder1'** and is unsynced with the other extruder's motors if at all they were synced.
+* We activate the other extruder in case it was inactivated due to the other motor.
+* In case we require any offset particularly for this mode, then we input **'SET_GCODE_OFFSET X=# Y=# Z=#'**
+
+15. *[gcode_macro MODE_DUPLICATION]/[gcode_macro MODE_MIRRORED]*
+
+Since the prerequisites commands of both duplicate and mirrored are the same, hence they are being mentioned as a single explanatory tab.
+
+* Create the usual 'dcvars' variable, along with **'bed_x_mid'** which is the average of the max and min of the bed dimensions. Along with it, create the **'offset_temp'** variable which includes the 'params.R' i.e., the temperature offset parameters.
+* Make the if statement where the condition is to detect the active dual carriage. 
+* Under it, we put in commands **'SET_DUAL_CARRIAGE_MODE MODE=extruder1'** where we set the mode to full control 
+* We home the X-axis using **'G28 X'** 
+* We isolate the sync of the 'extruder1' using **'SYNC_EXTRUDER_MOTION EXTRUDER=extruder1 MOTION_QUEUE=extruder1'** if in case it was synced with the other steppers.
+* We activate the other extruder by using **'ACTIVATE_EXTRUDER EXTRUDER=extruder'**
+* We set the dual carriage mode as **'SET_DUAL_CARRIAGE CARRIAGE=1'** and then bring the 2nd tool to the distance at half of the bed size using the **'bed_x_mid'** parameters using **'G1 X{params.X|default(bed_x_mid)|float} F{dcvars.feedrate}'**
+* We then set the carriage mode as **'SET_DUAL_CARRIAGE CARRIAGE=0'** and then bring it to minimum using **'G1 X{dcvars.bed_x_min|float} F{dcvars.feedrate}'**
+* We then set the temperature offset variables that have been set accordingly using **'SET_GCODE_VARIABLE MACRO=DC_VARS VARIABLE=offset_temp VALUE={offset_temp}'**
+* The macro of syncing the both the tool's temperature syncing is also to be made, which is then implemented in here, i.e., **'_SYNC_EXTRUDERS_TEMP'**
+* We then sync every motor stepper motors that are required in the case of extruder steppers. Firstly we implement it using **'SYNC_EXTRUDER_MOTION EXTRUDER=extruder1 MOTION_QUEUE=extruder'** followed by **'SYNC_EXTRUDER_MOTION EXTRUDER=extrude1 MOTION_QUEUE=extruder'** which indicates that the **'extruder1'** is syncing with **'extruder'**, and added up the sync of **'[extruder_stepper extrude]'** to **'extruder'** again. 
+* We set the **'SET_DUAL_CARRIAGE_MODE MODE=DUPLICATION/MIRRORED'** depending on the mode that is activated
+* With this we end the if statement along with the macro.
+
+16. *[gcode_macro _SYNC_EXTRUDERS_TEMP]*
+
+This is the macro to sync the heating instructions, i.e., calling of the heating gcode for both the extruders when the duplicate/mirror mode is activated. 
+* We set the **'temp'** parameter as the 'extruder' target's parameter
+* It is followed by **'M109 S{temp}'**
